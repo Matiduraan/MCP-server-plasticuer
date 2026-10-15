@@ -10,17 +10,31 @@ import { query, closePool } from "../src/db.js";
 
 type Row = Record<string, any>;
 
+const errors: { section: string; error: string }[] = [];
+
+/** Ejecuta una consulta del relevamiento; si falla, la registra y sigue con las demás. */
+async function section(name: string, text: string): Promise<Row[]> {
+  try {
+    return await query<Row>(text);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`  ⚠ ${name}: ${message}`);
+    errors.push({ section: name, error: message });
+    return [];
+  }
+}
+
 async function main() {
   console.error("Conectando y relevando schema...");
 
-  const [info] = await query(
+  const [info = {}] = await section("info", 
     `SELECT @@SERVERNAME AS server, DB_NAME() AS [database],
             SERVERPROPERTY('ProductVersion') AS productVersion,
             SERVERPROPERTY('Edition') AS edition,
             DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS collation`,
   );
 
-  const tables = await query(`
+  const tables = await section("tables", `
     SELECT s.name AS [schema], t.name AS [table],
            SUM(CASE WHEN p.index_id IN (0,1) THEN p.rows ELSE 0 END) AS [rows],
            CAST(ep.value AS nvarchar(4000)) AS description
@@ -33,7 +47,7 @@ async function main() {
     GROUP BY s.name, t.name, CAST(ep.value AS nvarchar(4000))
     ORDER BY s.name, t.name`);
 
-  const columns = await query(`
+  const columns = await section("columns", `
     SELECT s.name AS [schema], o.name AS [table], c.column_id AS position, c.name AS [column],
            ty.name AS type, c.max_length AS maxLength, c.precision, c.scale,
            c.is_nullable AS nullable, c.is_identity AS isIdentity, c.is_computed AS isComputed,
@@ -49,7 +63,7 @@ async function main() {
     WHERE o.is_ms_shipped = 0
     ORDER BY s.name, o.name, c.column_id`);
 
-  const primaryKeys = await query(`
+  const primaryKeys = await section("primaryKeys", `
     SELECT s.name AS [schema], t.name AS [table], kc.name AS constraintName,
            c.name AS [column], ic.key_ordinal AS ordinal
     FROM sys.key_constraints kc
@@ -60,7 +74,7 @@ async function main() {
     WHERE kc.type = 'PK'
     ORDER BY s.name, t.name, ic.key_ordinal`);
 
-  const foreignKeys = await query(`
+  const foreignKeys = await section("foreignKeys", `
     SELECT fk.name AS constraintName,
            ps.name AS [schema], pt.name AS [table], pc.name AS [column],
            rs.name AS refSchema, rt.name AS refTable, rc.name AS refColumn,
@@ -77,7 +91,7 @@ async function main() {
     ORDER BY ps.name, pt.name, fk.name, fkc.constraint_column_id`);
 
   // Compatible con SQL Server 2008: sin STRING_AGG, se agrupa en JS.
-  const indexColumns = await query(`
+  const indexColumns = await section("indexColumns", `
     SELECT s.name AS [schema], t.name AS [table], i.name AS indexName, i.type_desc AS type,
            i.is_unique AS isUnique, i.is_primary_key AS isPrimaryKey,
            c.name AS [column], ic.is_included_column AS isIncluded,
@@ -116,7 +130,7 @@ async function main() {
     idx.includedColumns = idx.includedColumns.length ? idx.includedColumns.join(", ") : null;
   }
 
-  const views = await query(`
+  const views = await section("views", `
     SELECT s.name AS [schema], v.name AS [view], m.definition
     FROM sys.views v
     JOIN sys.schemas s ON s.schema_id = v.schema_id
@@ -124,7 +138,7 @@ async function main() {
     WHERE v.is_ms_shipped = 0
     ORDER BY s.name, v.name`);
 
-  const routines = await query(`
+  const routines = await section("routines", `
     SELECT s.name AS [schema], o.name AS name, o.type_desc AS type, o.modify_date AS modified,
            m.definition
     FROM sys.objects o
@@ -133,7 +147,7 @@ async function main() {
     WHERE o.type IN ('P','FN','IF','TF') AND o.is_ms_shipped = 0
     ORDER BY o.type_desc, s.name, o.name`);
 
-  const routineParams = await query(`
+  const routineParams = await section("routineParams", `
     SELECT s.name AS [schema], o.name AS routine, p.parameter_id AS position, p.name AS param,
            ty.name AS type, p.max_length AS maxLength, p.is_output AS isOutput
     FROM sys.parameters p
@@ -143,7 +157,7 @@ async function main() {
     WHERE o.is_ms_shipped = 0 AND p.parameter_id > 0
     ORDER BY s.name, o.name, p.parameter_id`);
 
-  const triggers = await query(`
+  const triggers = await section("triggers", `
     SELECT s.name AS [schema], t.name AS [table], tr.name AS [trigger],
            tr.is_disabled AS isDisabled, tr.is_instead_of_trigger AS isInsteadOf
     FROM sys.triggers tr
@@ -151,13 +165,16 @@ async function main() {
     JOIN sys.schemas s ON s.schema_id = t.schema_id
     ORDER BY s.name, t.name, tr.name`);
 
-  const permissions = await query(`
-    SELECT ISNULL(OBJECT_SCHEMA_NAME(major_id) + '.' + OBJECT_NAME(major_id), class_desc) AS securable,
-           permission_name AS permission, state_desc AS state
+  const permissions = await section("permissions", `
+    SELECT CAST(ISNULL(OBJECT_SCHEMA_NAME(major_id) + '.' + OBJECT_NAME(major_id), class_desc) AS nvarchar(512)) COLLATE DATABASE_DEFAULT AS securable,
+           CAST(permission_name AS nvarchar(128)) COLLATE DATABASE_DEFAULT AS permission,
+           CAST(state_desc AS nvarchar(60)) COLLATE DATABASE_DEFAULT AS state
     FROM sys.database_permissions
     WHERE grantee_principal_id = DATABASE_PRINCIPAL_ID()
     UNION ALL
-    SELECT 'ROLE', r.name, 'MEMBER'
+    SELECT CAST(N'ROLE' AS nvarchar(512)) COLLATE DATABASE_DEFAULT,
+           CAST(r.name AS nvarchar(128)) COLLATE DATABASE_DEFAULT,
+           CAST(N'MEMBER' AS nvarchar(60)) COLLATE DATABASE_DEFAULT
     FROM sys.database_role_members rm
     JOIN sys.database_principals r ON r.principal_id = rm.role_principal_id
     WHERE rm.member_principal_id = DATABASE_PRINCIPAL_ID()`);
@@ -175,12 +192,14 @@ async function main() {
     routineParams,
     triggers,
     permissions,
+    errors,
   };
 
   await mkdir("docs", { recursive: true });
   await writeFile("docs/schema.json", JSON.stringify(schema, null, 2), "utf8");
   await writeFile("docs/schema.md", toMarkdown(schema), "utf8");
 
+  if (errors.length) console.error(`Secciones con error: ${errors.map((e) => e.section).join(", ")}`);
   console.error(
     `Listo: ${tables.length} tablas, ${views.length} vistas, ${routines.length} procedimientos/funciones.`,
   );
@@ -306,6 +325,12 @@ function toMarkdown(s: any): string {
   out.push("## Permisos del usuario de conexión", "", "| Objeto | Permiso | Estado |", "|---|---|---|");
   for (const p of s.permissions) out.push(`| ${esc(p.securable)} | ${esc(p.permission)} | ${esc(p.state)} |`);
   out.push("");
+
+  if (s.errors?.length) {
+    out.push("## Secciones que no se pudieron relevar", "");
+    for (const e of s.errors) out.push(`- ${e.section}: ${esc(e.error)}`);
+    out.push("");
+  }
 
   return out.join("\n");
 }
