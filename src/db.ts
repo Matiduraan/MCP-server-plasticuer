@@ -18,7 +18,24 @@ export function getPool(): Promise<sql.ConnectionPool> {
   return poolPromise;
 }
 
-export type Params = Record<string, unknown>;
+/** Parámetro con tipo explícito (por ejemplo VarChar, para no forzar conversiones sobre columnas varchar). */
+export interface TypedParam {
+  type: sql.ISqlTypeFactoryWithNoParams | sql.ISqlType;
+  value: unknown;
+}
+
+export type Params = Record<string, unknown | TypedParam>;
+
+function isTyped(value: unknown): value is TypedParam {
+  return typeof value === "object" && value !== null && "type" in value && "value" in value;
+}
+
+function bind(request: sql.Request, params: Params) {
+  for (const [name, value] of Object.entries(params)) {
+    if (isTyped(value)) request.input(name, value.type, value.value);
+    else request.input(name, value);
+  }
+}
 
 /**
  * Ejecuta una consulta parametrizada. Los parámetros se referencian como @nombre en el SQL.
@@ -30,9 +47,7 @@ export async function query<T = Record<string, unknown>>(
 ): Promise<T[]> {
   const pool = await getPool();
   const request = pool.request();
-  for (const [name, value] of Object.entries(params)) {
-    request.input(name, value);
-  }
+  bind(request, params);
   const result = await request.query<T>(text);
   return result.recordset ?? [];
 }
@@ -44,9 +59,7 @@ export async function execProcedure<T = Record<string, unknown>>(
 ): Promise<T[]> {
   const pool = await getPool();
   const request = pool.request();
-  for (const [key, value] of Object.entries(params)) {
-    request.input(key, value);
-  }
+  bind(request, params);
   const result = await request.execute<T>(name);
   return result.recordset ?? [];
 }

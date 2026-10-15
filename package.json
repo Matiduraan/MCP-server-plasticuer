@@ -13,6 +13,7 @@
     "dev": "tsx src/index.ts",
     "introspect": "tsx scripts/introspect-schema.ts",
     "explore": "tsx scripts/explore-stock-precios.ts",
+    "probar": "tsx scripts/probar-productos.ts",
     "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
