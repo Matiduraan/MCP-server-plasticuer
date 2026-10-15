@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "introspect": "tsx scripts/introspect-schema.ts",
+    "explore": "tsx scripts/explore-stock-precios.ts",
     "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
