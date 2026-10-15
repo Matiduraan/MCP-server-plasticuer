@@ -76,20 +76,45 @@ async function main() {
     JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
     ORDER BY ps.name, pt.name, fk.name, fkc.constraint_column_id`);
 
-  const indexes = await query(`
+  // Compatible con SQL Server 2008: sin STRING_AGG, se agrupa en JS.
+  const indexColumns = await query(`
     SELECT s.name AS [schema], t.name AS [table], i.name AS indexName, i.type_desc AS type,
            i.is_unique AS isUnique, i.is_primary_key AS isPrimaryKey,
-           STRING_AGG(CASE WHEN ic.is_included_column = 0 THEN c.name END, ', ')
-             WITHIN GROUP (ORDER BY ic.key_ordinal) AS keyColumns,
-           STRING_AGG(CASE WHEN ic.is_included_column = 1 THEN c.name END, ', ') AS includedColumns
+           c.name AS [column], ic.is_included_column AS isIncluded,
+           ic.key_ordinal AS keyOrdinal, ic.index_column_id AS indexColumnId
     FROM sys.indexes i
     JOIN sys.tables t ON t.object_id = i.object_id
     JOIN sys.schemas s ON s.schema_id = t.schema_id
     JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
     JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
     WHERE i.type > 0 AND t.is_ms_shipped = 0
-    GROUP BY s.name, t.name, i.name, i.type_desc, i.is_unique, i.is_primary_key
-    ORDER BY s.name, t.name, i.name`);
+    ORDER BY s.name, t.name, i.name, ic.is_included_column, ic.key_ordinal, ic.index_column_id`);
+
+  const indexes: Row[] = [];
+  const indexMap = new Map<string, Row>();
+  for (const r of indexColumns as Row[]) {
+    const k = `${r.schema}.${r.table}.${r.indexName}`;
+    let idx = indexMap.get(k);
+    if (!idx) {
+      idx = {
+        schema: r.schema,
+        table: r.table,
+        indexName: r.indexName,
+        type: r.type,
+        isUnique: r.isUnique,
+        isPrimaryKey: r.isPrimaryKey,
+        keyColumns: [] as string[],
+        includedColumns: [] as string[],
+      };
+      indexMap.set(k, idx);
+      indexes.push(idx);
+    }
+    (r.isIncluded ? idx.includedColumns : idx.keyColumns).push(r.column);
+  }
+  for (const idx of indexes) {
+    idx.keyColumns = idx.keyColumns.join(", ");
+    idx.includedColumns = idx.includedColumns.length ? idx.includedColumns.join(", ") : null;
+  }
 
   const views = await query(`
     SELECT s.name AS [schema], v.name AS [view], m.definition
