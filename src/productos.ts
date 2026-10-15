@@ -5,7 +5,7 @@
  * - Stock: stocks_locales (idArticulo, idSucursal, stock) coincide con la suma de movimientos de
  *   la tabla stocks, así que se usa directamente. Puede ser negativo.
  * - Precios: articulos_precios por lista (precios_listas). Se exponen solo las listas de venta
- *   (puedefacturar = 1: A, B, C); la lista COSTO queda excluida.
+ *   (puedefacturar = 1: A, B, C); la lista COSTO queda excluida. Precio 0 = sin precio (null).
  * - "Activo" = articulos.activo = 1 y no inhabilitado.
  * - SQL compatible con SQL Server 2008 (paginación con ROW_NUMBER, sin OFFSET/FETCH).
  */
@@ -195,6 +195,7 @@ export async function buscarProductos(f: FiltrosProductos): Promise<PaginaProduc
   }
   if (f.soloConStock) where.push("ISNULL(st.stock, 0) > 0");
 
+  if (f.precioMin !== undefined || f.precioMax !== undefined) where.push("pr.precio > 0");
   if (f.precioMin !== undefined) {
     params.precioMin = { type: sql.Float, value: f.precioMin };
     where.push("pr.precio >= @precioMin");
@@ -287,8 +288,9 @@ async function enriquecer(rows: Record<string, any>[], listas: Listas): Promise<
   const preciosPorArt = new Map<number, Record<string, number | null>>();
   for (const p of precios) {
     const m = preciosPorArt.get(p.idArticulo) ?? {};
+    // Precio 0 = sin precio cargado en esa lista: se informa como null para no cotizar $0.
     m[nombreLista.get(p.idLista) ?? String(p.idLista)] =
-      p.precio === null ? null : Math.round(p.precio * 100) / 100;
+      p.precio === null || p.precio <= 0 ? null : Math.round(p.precio * 100) / 100;
     preciosPorArt.set(p.idArticulo, m);
   }
   const stockPorArt = new Map<number, Producto["stock"]["porSucursal"]>();

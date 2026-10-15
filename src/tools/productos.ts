@@ -4,7 +4,8 @@ import { buscarProductos } from "../productos.js";
 import { errorResult, jsonResult } from "./util.js";
 
 const DESCRIPCION_PRODUCTO = `Cada producto incluye: código interno, descripción, códigos de barras, línea, rubro, rubro web,
-proveedor, unidad, precios por lista de venta (A, B, C) y stock total y por sucursal (Pasteur, Muñiz).
+proveedor, unidad, precios por lista de venta (A, B, C; null = sin precio cargado en esa lista)
+y stock total y por sucursal (Pasteur, Muñiz).
 El stock puede ser negativo (ventas registradas sin ingreso de mercadería).`;
 
 export function registerProductosTools(server: McpServer): void {
