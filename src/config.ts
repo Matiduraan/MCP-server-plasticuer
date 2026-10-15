@@ -21,8 +21,24 @@ function int(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/**
+ * SQL Server viejos (2008/2012/2014 sin parches) solo negocian TLS 1.0/1.1, que OpenSSL 3
+ * (Node 17+) rechaza por defecto: "ssl_choose_client_version:unsupported protocol".
+ * Con DB_TLS_MIN_VERSION=TLSv1 se permite esa negociación solo para esta conexión.
+ */
+function tlsOptions(): Record<string, unknown> | undefined {
+  const minVersion = process.env.DB_TLS_MIN_VERSION;
+  if (!minVersion) return undefined;
+  return {
+    minVersion,
+    // SECLEVEL=0 habilita los cifrados viejos que esos servidores ofrecen.
+    ciphers: "DEFAULT@SECLEVEL=0",
+  };
+}
+
 export function loadSqlConfig(): SqlConfig {
   const instanceName = process.env.DB_INSTANCE || undefined;
+  const cryptoCredentialsDetails = tlsOptions();
 
   return {
     server: required("DB_SERVER"),
@@ -43,6 +59,7 @@ export function loadSqlConfig(): SqlConfig {
       trustServerCertificate: bool("DB_TRUST_SERVER_CERTIFICATE", true),
       instanceName,
       enableArithAbort: true,
-    },
+      ...(cryptoCredentialsDetails ? { cryptoCredentialsDetails } : {}),
+    } as SqlConfig["options"],
   };
 }
