@@ -1,35 +1,36 @@
 /**
- * Prueba los métodos de productos contra la base real (solo lectura).
+ * Prueba la consulta de productos contra la base real (solo lectura).
  * Guarda los resultados en docs/prueba-productos.json.
  *
  * Uso: npm run probar
  */
 import { mkdir, writeFile } from "node:fs/promises";
+import type { ProductsQuery } from "../src/api.js";
 import { closePool } from "../src/db.js";
-import { buscarProductos, type FiltrosProductos } from "../src/productos.js";
+import { listProducts } from "../src/productos.js";
 
-const casos: Record<string, FiltrosProductos> = {
-  porCodigo: { codigos: [304483], incluirInactivos: true, porPagina: 1 },
-  porCodigoBarras: { codigoBarras: "6948013100062", incluirInactivos: true, porPagina: 10 },
-  porNombre: { texto: "taza ceramica", priorizarNombreExacto: "taza ceramica", porPagina: 10 },
-  porNombreConComodin: { texto: "100%", porPagina: 3 },
-  lineaJugueteriaConStock: { linea: "jugueteria", soloConStock: true, orden: "stock", descendente: true, porPagina: 5 },
-  rubroWebPorId: { idRubroWeb: 17000007, porPagina: 5 },
-  rubroWebPorNombre: { rubroWeb: "mochilas", porPagina: 5 },
-  rangoPrecioListaB: { idListaPrecio: 2, precioMin: 5000, precioMax: 10000, orden: "precio", porPagina: 5 },
-  stockMuniz: { idSucursal: 2, soloConStock: true, orden: "stock", descendente: true, porPagina: 5 },
-  paginaFueraDeRango: { linea: "navidad", pagina: 9999, porPagina: 50 },
-  sinResultados: { texto: "zzzz-no-existe-zzzz" },
+const both = { stock: true, price: true };
+
+const casos: Record<string, ProductsQuery> = {
+  sinQuery: { offset: 0, limit: 5, query: null, include: both },
+  porNombre: { offset: 0, limit: 10, query: "taza ceramica", include: both },
+  segundaPagina: { offset: 10, limit: 10, query: "taza ceramica", include: both },
+  soloStock: { offset: 0, limit: 5, query: "mochila", include: { stock: true, price: false } },
+  soloPrecio: { offset: 0, limit: 5, query: "mochila", include: { stock: false, price: true } },
+  conComodin: { offset: 0, limit: 5, query: "100%", include: both },
+  limiteMaximo: { offset: 0, limit: 50, query: "cartera", include: both },
+  offsetFueraDeRango: { offset: 100000, limit: 20, query: "navidad", include: both },
+  sinResultados: { offset: 0, limit: 20, query: "zzzz-no-existe-zzzz", include: both },
 };
 
 async function main() {
   const out: Record<string, unknown> = { generatedAt: new Date().toISOString() };
-  for (const [nombre, filtros] of Object.entries(casos)) {
+  for (const [nombre, q] of Object.entries(casos)) {
     const start = Date.now();
     try {
-      const r = await buscarProductos(filtros);
+      const r = await listProducts(q);
       out[nombre] = { ms: Date.now() - start, ...r };
-      console.error(`  ✓ ${nombre}: ${r.total} resultados (${Date.now() - start} ms)`);
+      console.error(`  ✓ ${nombre}: ${r.data.length} de ${r.pagination.total} (${Date.now() - start} ms)`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       out[nombre] = { error: message };
